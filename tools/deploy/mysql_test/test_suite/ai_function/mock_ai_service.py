@@ -48,6 +48,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_GET(self):
+        if self.path == "/reset":
+            with self.lock:
+                self.requests.clear()
         self.respond(self.statistics())
 
     @classmethod
@@ -125,6 +128,25 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/"):
             return {"model": body.get("model", ""), "embeddings": embeddings}
         data = [{"object": "embedding", "index": index, "embedding": vector} for index, vector in enumerate(embeddings)]
+        # Faults are selected by the test endpoint URL, never by user/model data.
+        if self.path.startswith("/fault/"):
+            fault = self.path.split("/")[2]
+            if fault == "missing-index" and data:
+                data[0].pop("index")
+            elif fault == "duplicate-index" and len(data) > 1:
+                data[1]["index"] = data[0]["index"]
+            elif fault == "invalid-index" and data:
+                data[0]["index"] = "0"
+            elif fault == "wrong-count":
+                data = data[:-1]
+            elif fault == "empty-vector" and data:
+                data[0]["embedding"] = []
+            elif fault == "inconsistent-dimension" and data:
+                data[0]["embedding"] = data[0]["embedding"][:-1]
+            elif fault == "nonnumeric" and data:
+                data[0]["embedding"][0] = "invalid"
+            elif fault == "overflow" and data:
+                data[0]["embedding"][0] = 1e100
         # reversed on purpose: the client has to restore the order by index
         return {"object": "list", "model": body.get("model", ""), "data": list(reversed(data))}
 
@@ -145,6 +167,18 @@ class Handler(BaseHTTPRequestHandler):
                 text = str(document)
             score = 1.0 if text == query else (0.5 if query and query in text else 0.01)
             results.append({"index": index, "relevance_score": score, "document": {"text": text}})
+        if self.path.startswith("/fault/"):
+            fault = self.path.split("/")[2]
+            if fault == "wrong-count":
+                results = results[:-1]
+            elif fault == "duplicate-index" and len(results) > 1:
+                results[1]["index"] = results[0]["index"]
+            elif fault == "out-of-range" and results:
+                results[0]["index"] = len(results)
+            elif fault == "missing-score" and results:
+                results[0].pop("relevance_score")
+            elif fault == "invalid-results":
+                return {"results": {"unexpected": "object"}}
         # reversed on purpose: the client has to restore the order by index
         return {"id": "rerank-mock", "results": list(reversed(results))}
 

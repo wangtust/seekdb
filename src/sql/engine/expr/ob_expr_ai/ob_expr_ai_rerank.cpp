@@ -256,10 +256,27 @@ int ObExprAIRerank::eval_ai_rerank_with_doc_key(const ObExpr &expr, ObEvalCtx &c
   ObJsonArray *sorted_document_array = nullptr;
   if (OB_FAIL(get_doc_array_from_documents_array_with_key(allocator, document_array, doc_key, doc_array))) {
   } else {
-    ObAIFuncModel model(allocator, info, endpoint_info);
-    if (OB_FAIL(model.call_rerank(query, doc_array, result_array))) {
+    ObArray<ObString> headers;
+    if (OB_FAIL(ObAIFuncUtils::check_info_type_rerank(&info))) {
+    } else if (OB_FAIL(ObAIFuncUtils::get_header(allocator, info, endpoint_info, headers))) {
+    } else if (OB_FAIL(ObAIFuncJsonUtils::get_json_array(allocator, result_array))) {
+    }
+    const int64_t batch_size = 20;
+    for (int64_t start = 0; OB_SUCC(ret) && start < doc_array->element_count(); start += batch_size) {
+      ObJsonArray *batch_docs = nullptr;
+      ObJsonArray *batch_results = nullptr;
+      const int64_t end = std::min<int64_t>(start + batch_size, doc_array->element_count());
+      if (OB_FAIL(construct_batch_document_array(allocator, doc_array, start, end, batch_docs))) {
+      } else if (OB_FAIL(inner_eval_ai_rerank(allocator, info, endpoint_info, headers,
+                                            query, batch_docs, batch_results))) {
+      } else if (OB_FAIL(batch_result_add_base(allocator, batch_results, start))) {
+      } else if (OB_FAIL(append_result_array(allocator, result_array, batch_results))) {
+      }
+    }
+    if (OB_FAIL(ret)) {
+    } else if (OB_FAIL(sort_result_array_by_score(allocator, result_array, document_array->element_count()))) {
     } else if (OB_FAIL(sort_document_array_by_model_result(allocator, document_array, result_array, sorted_document_array))) {
-    } 
+    }
   }
   if (OB_SUCC(ret)) {
     ObString raw_str;
@@ -322,8 +339,9 @@ int ObExprAIRerank::sort_document_array_by_model_result(ObIAllocator &allocator,
   if (OB_FAIL(ObAIFuncJsonUtils::get_json_array(allocator, sorted_document_array_obj))) {
   } else {
     int64_t count = model_result_array->element_count();
+    if (count != doc_count) { ret = OB_INVALID_DATA; }
     ObArray<char> seen_indexes;
-    if (count > 0) {
+    if (OB_SUCC(ret) && count > 0) {
       if (OB_FAIL(seen_indexes.reserve(count))) {
         ret = OB_ALLOCATE_MEMORY_FAILED;
       } else {
@@ -448,7 +466,8 @@ int ObExprAIRerank::inner_eval_ai_rerank(ObIAllocator &allocator,
   } else if (OB_ISNULL(res = static_cast<ObJsonArray *>(response))) {
     ret = OB_ERR_UNEXPECTED;
   } else {
-    result_array = res;
+    ret = ObAIFuncJsonUtils::normalize_rerank_result(
+        allocator, res, document_array->element_count(), result_array);
   }
   return ret;
 }
@@ -505,9 +524,10 @@ int ObExprAIRerank::sort_result_array_by_score(ObIAllocator &allocator, ObJsonAr
     ret = OB_INVALID_ARGUMENT;
   } else {
     int64_t count = result_array->element_count();
+    if (count != doc_count) { ret = OB_INVALID_DATA; }
     // 先校验每个结果元素, 保证后续比较可以安全读取 index 和 score
     ObArray<char> seen_indexes;
-    if (count > 0) {
+    if (OB_SUCC(ret) && count > 0) {
       if (OB_FAIL(seen_indexes.reserve(count))) {
         ret = OB_ALLOCATE_MEMORY_FAILED;
       } else {
