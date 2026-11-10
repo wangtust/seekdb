@@ -497,6 +497,7 @@ END_P SET_VAR DELIMITER
 %type <node> dynamic_sampling_hint
 %type <node> skip_index_type opt_skip_index_type_list
 %type <node> vec_index_params vec_index_param vec_index_param_value opt_with_vector_index_parameters
+%type <node> file_sql_table_expr file_sql_args file_sql_arg
 %type <node> json_table_expr unnest_expr mock_jt_on_error_on_empty jt_column_list json_table_column_def
 %type <node> json_table_ordinality_column_def json_table_exists_column_def json_table_value_column_def json_table_nested_column_def
 %type <node> opt_value_on_empty_or_error_or_mismatch opt_on_mismatch
@@ -10831,6 +10832,10 @@ tbl_name
   unname_node->sql_str_off_ = @2.first_column;
   $$->value_ = 1; //lateral
 }
+| file_sql_table_expr
+{
+  $$ = $1;
+}
 | json_table_expr
 {
   $$ = $1;
@@ -11257,6 +11262,43 @@ relation_factor %prec LOWER_PARENS
 | TABLE '(' simple_expr ')' AS relation_name
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 2, $3, $6);
+}
+;
+
+/* File table calls are bound before ordinary expression resolution so their
+ * columns come from a full schema pass over the read-only source. */
+file_sql_table_expr:
+NAME_OB '(' file_sql_args ')' %prec LOWER_PARENS
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, NULL);
+  $$->value_ = 0x46494c45;
+}
+| NAME_OB '(' file_sql_args ')' relation_name
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, $5);
+  $$->value_ = 0x46494c45;
+}
+| NAME_OB '(' file_sql_args ')' AS relation_name
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, $6);
+  $$->value_ = 0x46494c45;
+}
+;
+file_sql_args:
+file_sql_arg
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_EXPR_LIST, 1, $1);
+}
+| file_sql_args ',' file_sql_arg
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3);
+  merge_nodes($$, result, T_EXPR_LIST, $$);
+}
+;
+file_sql_arg:
+expr
+{
+  $$ = $1;
 }
 ;
 
