@@ -47,11 +47,13 @@ class ObFunctionTableOp : public ObOperator
 public:
   ObFunctionTableOp(ObExecContext &exec_ctx, const ObOpSpec &spec, ObOpInput *input)
     : ObOperator(exec_ctx, spec, input),
+    file_reader_(nullptr),
+    file_row_allocator_("FileSqlRow"),
     node_idx_(0),
     already_calc_(false),
     row_count_(0),
     col_count_(0),
-    value_table_(NULL), file_reader_(nullptr), file_row_allocator_("FileSqlRow")
+    value_table_(NULL)
   {}
 
   virtual int inner_open() override;
