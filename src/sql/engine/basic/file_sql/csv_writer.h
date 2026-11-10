@@ -14,7 +14,7 @@ public:
     final_=options.path.substr(slash+1);if(final_.empty()||final_=="."||final_=="..")return fail("invalid COPY target name");
     std::string parent=options.path.substr(0,slash),canonical_dir;if(parent.empty())parent="/";
     if(!canonical(parent,root,canonical_dir,error))return false;
-    directory_=::open(canonical_dir.c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+    directory_=open_canonical(canonical_dir,true);
     struct stat actual,current;if(directory_<0||fstat(directory_,&actual)||stat(canonical_dir.c_str(),&current)||actual.st_ino!=current.st_ino||actual.st_dev!=current.st_dev)return fail("COPY directory changed");
     struct stat target;if(fstatat(directory_,final_.c_str(),&target,AT_SYMLINK_NOFOLLOW)==0||errno!=ENOENT)return fail("COPY target already exists or cannot be inspected");
     static std::atomic<uint64_t> sequence{0};int fd=-1;

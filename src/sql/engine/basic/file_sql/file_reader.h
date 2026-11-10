@@ -132,6 +132,33 @@ inline bool canonical(const std::string &path,const std::string &root,std::strin
 
 #include "parquet_reader.h"
 
+// Open a canonical absolute path without following any path component that
+// may have been replaced with a symlink after the secure_file_priv check.
+inline int open_canonical(const std::string &path, bool directory) {
+  if (path.empty() || path[0] != '/') { errno = EINVAL; return -1; }
+  int parent = ::open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (parent < 0) return -1;
+  size_t start = 1;
+  while (start < path.size()) {
+    const size_t slash = path.find('/', start);
+    const bool last = slash == std::string::npos;
+    const std::string component = path.substr(start, last ? path.size()-start : slash-start);
+    if (component.empty() || component == "." || component == "..") {
+      ::close(parent); errno = EINVAL; return -1;
+    }
+    const int flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW |
+                      ((!last || directory) ? O_DIRECTORY : O_NONBLOCK);
+    const int child = ::openat(parent, component.c_str(), flags);
+    const int saved_errno = errno;
+    ::close(parent);
+    if (child < 0) { errno = saved_errno; return -1; }
+    parent = child;
+    if (last) return parent;
+    start = slash + 1;
+  }
+  return parent;
+}
+
 class FlatJson {
 public:
   explicit FlatJson(const std::string &s):s_(s),p_(0){}
@@ -197,7 +224,7 @@ public:
     close();options=opts;root_=root;record_=0;error.clear();
     if(options.format=="glob")return open_glob();
     std::string resolved;if(!canonical(options.path,root_,resolved,error))return false;options.path=resolved;
-    int fd=::open(resolved.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW);struct stat st,path_st;
+    int fd=open_canonical(resolved,false);struct stat st,path_st;
     if(fd<0){error="cannot open read-only file";return false;}
     if(::fstat(fd,&st)||!S_ISREG(st.st_mode)||::stat(resolved.c_str(),&path_st)||st.st_ino!=path_st.st_ino||st.st_dev!=path_st.st_dev){::close(fd);error="not a stable regular file";return false;}
     Snapshot current=Snapshot::from(st);

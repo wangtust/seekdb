@@ -8,7 +8,7 @@ struct CompactValue {
 };
 class CompactReader {
 public:
-  CompactReader(const std::string &data,size_t start=0):data_(data),pos(start){}
+  CompactReader(const std::string &data,size_t start=0):pos(start),data_(data){}
   bool structure(CompactValue &value,int depth=0){
     if(depth>32)return false;int id=0;
     while(pos<data_.size()){unsigned char h=data_[pos++];if(h==0)return true;int delta=h>>4,type=h&15;

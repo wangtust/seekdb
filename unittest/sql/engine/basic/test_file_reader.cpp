@@ -36,5 +36,14 @@ int main(int argc,char **argv) {
     while(true){assert(parquet.next(row,end));if(end)break;sum+=std::atoi(row[0].text.c_str());++count;}
     assert(count==7&&sum==21);assert(parquet.rescan());assert(parquet.next(row,end)&&row[0].text=="0");
   }
+  std::string fifo=std::string(dir)+"/pipe.csv";assert(mkfifo(fifo.c_str(),0600)==0);
+  o.path=fifo;o.format="csv";assert(!reader.open(o,dir));unlink(fifo.c_str());
+  // A replaced ancestor is rejected even if the final component is regular.
+  std::string sub=std::string(dir)+"/sub";assert(mkdir(sub.c_str(),0700)==0);
+  std::string moved=std::string(dir)+"/moved";assert(rename(sub.c_str(),moved.c_str())==0);
+  write(moved+"/test.csv", "a\n1\n");
+  assert(symlink(moved.c_str(),sub.c_str())==0);
+  assert(open_canonical(sub+"/test.csv",false)<0);
+  unlink(sub.c_str());unlink((moved+"/test.csv").c_str());rmdir(moved.c_str());
   unlink(path.c_str());unlink((std::string(dir)+"/test.csv").c_str());rmdir(dir);
 }
