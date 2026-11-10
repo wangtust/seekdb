@@ -3935,7 +3935,7 @@ std::string file_node_text(const ParseNode *node)
 bool file_literal(const ParseNode *node, std::string &value)
 {
   if (nullptr == node) return false;
-  if (node->type_ == T_VARCHAR || node->type_ == T_CHAR || node->type_ == T_SFU_VARCHAR) {
+  if (node->type_ == T_VARCHAR || node->type_ == T_CHAR) {
     value.assign(node->str_value_, node->str_len_); return true;
   } else if (node->type_ == T_INT || node->type_ == T_BOOL) {
     value = std::to_string(node->value_); return true;
@@ -7753,6 +7753,7 @@ int ObDMLResolver::resolve_function_table_column_item_sys_func(const TableItem &
             if (existing == nullptr) {
               ObObjMeta meta;
               switch (column.type) {
+              case file_sql::Type::NIL: meta.set_null(); break;
               case file_sql::Type::BIGINT: meta.set_int(); break;
               case file_sql::Type::DOUBLE: meta.set_double(); break;
               case file_sql::Type::BOOLEAN: meta.set_tinyint(); break;

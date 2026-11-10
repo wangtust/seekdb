@@ -11277,6 +11277,7 @@ COPY select_with_parens TO STRING_VALUE file_sql_copy_opts
   ParseNode *into = NULL;
   malloc_non_terminal_node(into, result->malloc_pool_, T_INTO_OUTFILE, 2, $4, $5);
   into->value_ = 0x46434f50;
+  into->is_tree_not_param_ = 1;
   $$->children_[PARSE_SELECT_INTO] = into;
 }
 | COPY relation_factor TO STRING_VALUE file_sql_copy_opts
@@ -11289,6 +11290,7 @@ COPY select_with_parens TO STRING_VALUE file_sql_copy_opts
   merge_nodes(from, result, T_FROM_LIST, $2);
   malloc_non_terminal_node(into, result->malloc_pool_, T_INTO_OUTFILE, 2, $4, $5);
   into->value_ = 0x46434f50;
+  into->is_tree_not_param_ = 1;
   malloc_select_node($$, result->malloc_pool_);
   $$->children_[PARSE_SELECT_SELECT] = projects;
   $$->children_[PARSE_SELECT_FROM] = from;
@@ -11327,16 +11329,19 @@ NAME_OB '(' file_sql_args ')' %prec LOWER_PARENS
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, NULL);
   $$->value_ = 0x46494c45;
+  $$->is_tree_not_param_ = 1;
 }
 | NAME_OB '(' file_sql_args ')' relation_name
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, $5);
   $$->value_ = 0x46494c45;
+  $$->is_tree_not_param_ = 1;
 }
 | NAME_OB '(' file_sql_args ')' AS relation_name
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, $6);
   $$->value_ = 0x46494c45;
+  $$->is_tree_not_param_ = 1;
 }
 ;
 file_sql_args:
