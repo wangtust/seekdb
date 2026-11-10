@@ -62,3 +62,29 @@ and GNU date (nanosecond timestamps). For Homebrew installations, invoke
 `/opt/homebrew/opt/coreutils/libexec/gnubin` to PATH. Full build/query benchmark
 scores are not inferred from the helper microbenchmark and must be reported
 separately after running the actual workload.
+
+## BENG already-normalized ASCII
+
+The English normalizer previously allocated a lowercase copy for every token,
+including an already-lowercase ASCII token. For UTF-8 only, a token containing no
+non-ASCII bytes and no uppercase ASCII now borrows its existing document slice.
+Any uppercase or non-ASCII token uses the original charset conversion. The BENG
+parser still copies returned tokens into its caller's allocator before advancing
+the stream, and the grouping normalizer still deep-copies new keys. Consequently,
+retained map keys do not borrow the normalizer's temporary memory or change their
+lifetime. No case-folding or punctuation rule changes are introduced.
+
+The native English test compares outputs with the original trim-and-lowercase
+algorithm for both UTF-8 collations, mixed-case text, non-ASCII characters,
+punctuation, long tokens and mixed borrowed/owned tokens:
+
+```sh
+python3 unittest/storage/fts/run_ik_char_classification.py \
+  --build-dir /absolute/path/to/build_release --english
+```
+
+The SQL regression `fts_index.beng_ascii_normalization` additionally checks
+retained-token frequencies, including 200 repeated mixed-case tokens. Its
+expected result was recorded on the original server. The fast path removes one
+normalization allocation/copy for eligible tokens; its complete server-level
+performance effect must be measured with the original benchmark described above.
