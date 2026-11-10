@@ -499,6 +499,7 @@ END_P SET_VAR DELIMITER
 %type <node> skip_index_type opt_skip_index_type_list
 %type <node> vec_index_params vec_index_param vec_index_param_value opt_with_vector_index_parameters
 %type <node> file_sql_table_expr file_sql_args file_sql_arg
+%type <node> file_sql_copy_stmt file_sql_copy_opts file_sql_copy_opt_list file_sql_copy_opt
 %type <node> json_table_expr unnest_expr mock_jt_on_error_on_empty jt_column_list json_table_column_def
 %type <node> json_table_ordinality_column_def json_table_exists_column_def json_table_value_column_def json_table_nested_column_def
 %type <node> opt_value_on_empty_or_error_or_mismatch opt_on_mismatch
@@ -558,6 +559,7 @@ opt_end_p:
 /* only preparable statement will set question mark size */
 stmt:
     select_stmt             { $$ = $1; question_mark_issue($$, result); }
+  | file_sql_copy_stmt      { $$ = $1; check_question_mark($$, result); }
   | insert_stmt             { $$ = $1; question_mark_issue($$, result); }
   | create_table_stmt       {
     $$ = $1;
@@ -11268,6 +11270,58 @@ relation_factor %prec LOWER_PARENS
 
 /* File table calls are bound before ordinary expression resolution so their
  * columns come from a full schema pass over the read-only source. */
+file_sql_copy_stmt:
+COPY select_with_parens TO STRING_VALUE file_sql_copy_opts
+{
+  $$ = $2;
+  ParseNode *into = NULL;
+  malloc_non_terminal_node(into, result->malloc_pool_, T_INTO_OUTFILE, 2, $4, $5);
+  into->value_ = 0x46434f50;
+  $$->children_[PARSE_SELECT_INTO] = into;
+}
+| COPY relation_factor TO STRING_VALUE file_sql_copy_opts
+{
+  ParseNode *star = NULL, *project = NULL, *projects = NULL, *from = NULL, *into = NULL;
+  malloc_terminal_node(star, result->malloc_pool_, T_STAR);
+  malloc_non_terminal_node(project, result->malloc_pool_, T_PROJECT_STRING, 1, star);
+  dup_string_to_node(project, result->malloc_pool_, "*");
+  merge_nodes(projects, result, T_PROJECT_LIST, project);
+  merge_nodes(from, result, T_FROM_LIST, $2);
+  malloc_non_terminal_node(into, result->malloc_pool_, T_INTO_OUTFILE, 2, $4, $5);
+  into->value_ = 0x46434f50;
+  malloc_select_node($$, result->malloc_pool_);
+  $$->children_[PARSE_SELECT_SELECT] = projects;
+  $$->children_[PARSE_SELECT_FROM] = from;
+  $$->children_[PARSE_SELECT_INTO] = into;
+}
+;
+file_sql_copy_opts:
+/* empty */ { $$ = NULL; }
+| '(' file_sql_copy_opt_list ')' { $$ = $2; }
+;
+file_sql_copy_opt_list:
+file_sql_copy_opt { malloc_non_terminal_node($$, result->malloc_pool_, T_EXPR_LIST, 1, $1); }
+| file_sql_copy_opt_list ',' file_sql_copy_opt
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3);
+  merge_nodes($$, result, T_EXPR_LIST, $$);
+}
+;
+file_sql_copy_opt:
+relation_name
+{
+  ParseNode *value = NULL;
+  malloc_terminal_node(value, result->malloc_pool_, T_BOOL); value->value_ = 1;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_OP_EQ, 2, $1, value);
+}
+| relation_name literal
+{ malloc_non_terminal_node($$, result->malloc_pool_, T_OP_EQ, 2, $1, $2); }
+| relation_name relation_name
+{ malloc_non_terminal_node($$, result->malloc_pool_, T_OP_EQ, 2, $1, $2); }
+| relation_name COMP_EQ literal
+{ malloc_non_terminal_node($$, result->malloc_pool_, T_OP_EQ, 2, $1, $3); }
+;
+
 file_sql_table_expr:
 NAME_OB '(' file_sql_args ')' %prec LOWER_PARENS
 {
