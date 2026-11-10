@@ -36,6 +36,10 @@ int main(int argc,char **argv) {
     while(true){assert(parquet.next(row,end));if(end)break;sum+=std::atoi(row[0].text.c_str());++count;}
     assert(count==7&&sum==21);assert(parquet.rescan());assert(parquet.next(row,end)&&row[0].text=="0");
   }
+  std::string bom=std::string(dir)+"/bom.csv";
+  write(bom, std::string("\xEF\xBB\xBF")+"id\n1\n");
+  o.path=bom;o.format="csv";assert(reader.open(o,dir));assert(reader.columns[0].name=="id");
+  assert(reader.next(row,end)&&!end&&row[0].text=="1");unlink(bom.c_str());
   std::string fifo=std::string(dir)+"/pipe.csv";assert(mkfifo(fifo.c_str(),0600)==0);
   o.path=fifo;o.format="csv";assert(!reader.open(o,dir));unlink(fifo.c_str());
   // A replaced ancestor is rejected even if the final component is regular.

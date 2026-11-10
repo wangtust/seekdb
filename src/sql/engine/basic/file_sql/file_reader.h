@@ -13,6 +13,7 @@
 // SQL evaluation, sorting, aggregation and joins remain in the native executor.
 #include <algorithm>
 #include <cerrno>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -35,6 +36,7 @@ enum class Type { NIL, BIGINT, DOUBLE, BOOLEAN, VARCHAR, DATE, DATETIME };
 struct Cell {
   std::string text;
   bool null_value = true;
+  bool json_string = false;
   Cell() {}
   explicit Cell(const std::string &v) : text(v), null_value(false) {}
 };
@@ -100,6 +102,7 @@ inline bool datetime(const std::string &v) {
 inline Type infer(const Cell &v) {
   if(v.null_value)return Type::NIL;
   const std::string &s=v.text;
+  if(v.json_string){if(date(s))return Type::DATE;if(datetime(s))return Type::DATETIME;return Type::VARCHAR;}
   if(s=="true"||s=="false")return Type::BOOLEAN;
   size_t i=(!s.empty()&&(s[0]=='-'||s[0]=='+'))?1:0;
   bool integer=i<s.size();for(size_t j=i;j<s.size();++j)integer&=s[j]>='0'&&s[j]<='9';
@@ -170,7 +173,7 @@ public:
       std::string key;if(!string(key))return fail(error);
       if(!keys.insert(key).second){error="duplicate JSON field";return false;}
       ws();if(!take(':'))return fail(error);ws();Cell v;
-      if(p_<s_.size()&&s_[p_]=='"'){if(!string(v.text))return fail(error);v.null_value=false;}
+      if(p_<s_.size()&&s_[p_]=='"'){if(!string(v.text))return fail(error);v.null_value=false;v.json_string=true;}
       else {
         size_t start=p_;while(p_<s_.size()&&s_[p_]!=','&&s_[p_]!='}'&&!(s_[p_]==' '||s_[p_]=='\t'||s_[p_]=='\r'||s_[p_]=='\n'))++p_;
         std::string token=s_.substr(start,p_-start);
@@ -250,7 +253,7 @@ public:
     }
     return unchanged();
   }
-  void project(const std::set<size_t> &ids){parquet_.projection=ids;}
+  void project(const std::set<size_t> &ids){parquet_.projection=ids;parquet_.projection_set=true;}
   bool rescan(){if(options.format=="parquet")return unchanged()&&parquet_.rescan();if(options.format=="glob"){glob_pos_=0;return true;}return unchanged()&&rewind_data();}
   void close(){if(file_){std::fclose(file_);file_=nullptr;}files_.clear();glob_pos_=0;}
 private:

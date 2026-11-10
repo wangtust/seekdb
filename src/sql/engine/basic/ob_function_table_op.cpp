@@ -49,6 +49,10 @@ int FileScanOp::inner_get_next_batch(int64_t maximum)
       if (ret == OB_ITER_END) { brs_.end_ = true; ret = OB_SUCCESS; break; }
     } else ++brs_.size_;
   }
+  if (OB_SUCC(ret)) {
+    const ObFunctionTableSpec &spec=static_cast<const ObFunctionTableSpec &>(get_spec());
+    for (int64_t i=0;i<spec.column_exprs_.count();++i) spec.column_exprs_.at(i)->set_evaluated_projected(eval_ctx_);
+  }
   return ret;
 }
 

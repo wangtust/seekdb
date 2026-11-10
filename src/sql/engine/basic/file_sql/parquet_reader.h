@@ -63,6 +63,7 @@ class ParquetReader {
   struct Cursor {uint64_t offset=0;std::vector<Cell> dictionary,page;size_t at=0;};
 public:
   std::set<size_t> projection;
+  bool projection_set = false;
   std::string error;
   bool init(FILE *file,std::vector<Column> &columns){
     file_=file;schema_.clear();groups_.clear();cursors_.clear();group_=0;row_=0;
@@ -76,8 +77,22 @@ public:
     for(size_t i=1;i<elements.size();++i){const auto &e=elements[i];Schema s;s.name=e.field(4).bytes;s.physical=e.field(1).integer;s.optional=e.field(3).integer==1;s.length=e.field(2).integer;
       if(e.field(3).integer==2||e.field(5).integer!=0)return fail("nested or repeated Parquet fields are unsupported");
       auto converted=e.fields.find(6);s.converted=converted==e.fields.end()?-1:converted->second.integer;
+      const auto logical=e.fields.find(10);
+      if(s.converted==5||(logical!=e.fields.end()&&logical->second.fields.count(5)))
+        return fail("Parquet decimal values are unsupported");
+      if(logical!=e.fields.end()) {
+        if(logical->second.fields.count(6))s.converted=6;
+        auto timestamp=logical->second.fields.find(8);
+        if(timestamp!=logical->second.fields.end()) {
+          const auto &unit=timestamp->second.field(2);
+          if(unit.fields.count(1))s.converted=9;
+          else if(unit.fields.count(2))s.converted=10;
+          else if(unit.fields.count(3))s.converted=22;
+          else return fail("unknown Parquet timestamp unit");
+        }
+      }
       switch(s.physical){case 0:s.type=Type::BOOLEAN;break;case 1:case 2:s.type=Type::BIGINT;break;case 3:s.type=Type::DATETIME;break;case 4:case 5:s.type=Type::DOUBLE;break;case 6:case 7:s.type=Type::VARCHAR;break;default:return fail("unsupported Parquet physical type");}
-      if(s.converted==6)s.type=Type::DATE;if(s.converted==9||s.converted==10)s.type=Type::DATETIME;
+      if(s.converted==6)s.type=Type::DATE;if(s.converted==9||s.converted==10||s.converted==22)s.type=Type::DATETIME;
       if(!valid_utf8(s.name)||s.name.empty())return fail("invalid Parquet column name");schema_.push_back(s);
     }
     for(const auto &g:meta.field(4).list){Group group;group.rows=g.field(3).integer;if(group.rows>uint64_t(std::numeric_limits<int64_t>::max()))return fail("invalid Parquet row count");
@@ -91,7 +106,7 @@ public:
   bool next(std::vector<Cell> &row,bool &end){
     while(group_<groups_.size()&&row_>=groups_[group_].rows){++group_;row_=0;reset_group();}
     if(group_>=groups_.size()){end=true;return true;}end=false;row.assign(schema_.size(),Cell());
-    for(size_t i=0;i<schema_.size();++i){if(!projection.empty()&&!projection.count(i))continue;Cursor &c=cursors_[i];if(c.at>=c.page.size()&&!page(i))return false;if(c.at>=c.page.size())return fail("Parquet page has too few rows");row[i]=c.page[c.at++];}
+    for(size_t i=0;i<schema_.size();++i){if(projection_set&&!projection.count(i))continue;Cursor &c=cursors_[i];if(c.at>=c.page.size()&&!page(i))return false;if(c.at>=c.page.size())return fail("Parquet page has too few rows");row[i]=c.page[c.at++];}
     ++row_;return true;
   }
 private:
@@ -104,7 +119,7 @@ private:
       switch(schema.physical){
       case 0:if(p+i/8>=data.size())return fail("truncated Parquet boolean");cell.text=((data[p+i/8]>>(i%8))&1)?"true":"false";break;
       case 1:case 2:case 3:{n=schema.physical==1?4:schema.physical==2?8:12;if(p+n>data.size())return fail("truncated Parquet integer");x=little(data.data()+p,std::min(n,size_t(8)));int64_t value=n==4?static_cast<int32_t>(x):static_cast<int64_t>(x);p+=n;
-        if(schema.type==Type::DATE||schema.type==Type::DATETIME){int64_t seconds=value;if(schema.type==Type::DATE)seconds=value*86400;else if(schema.physical==3){int64_t days=int64_t(little(data.data()+p-4,4))-2440588;seconds=days*86400+value/1000000000;}else seconds=value/(schema.converted==10?1000000:1000);
+        if(schema.type==Type::DATE||schema.type==Type::DATETIME){int64_t seconds=value;if(schema.type==Type::DATE)seconds=value*86400;else if(schema.physical==3){int64_t days=int64_t(little(data.data()+p-4,4))-2440588;seconds=days*86400+value/1000000000;}else seconds=value/(schema.converted==22?1000000000:schema.converted==10?1000000:1000);
           time_t stamp=seconds;struct tm t;if(!gmtime_r(&stamp,&t))return fail("Parquet timestamp out of range");char buf[64];strftime(buf,sizeof(buf),schema.type==Type::DATE?"%Y-%m-%d":"%Y-%m-%d %H:%M:%S",&t);cell.text=buf;
         }else cell.text=std::to_string(value);break;}
       case 4:{if(p+4>data.size())return fail("truncated Parquet float");uint32_t v=little(data.data()+p,4);float f;memcpy(&f,&v,4);p+=4;if(!std::isfinite(f))return fail("non-finite Parquet float");cell.text=real(f);break;}
@@ -121,11 +136,17 @@ private:
       // Header size is not prefixed: a bounded read is decoded by compact protocol.
       if(fseeko(file_,0,SEEK_END))return false;off_t size=ftello(file_);if(cursor.offset>=uint64_t(size))return fail("Parquet page offset out of range");
       std::string header;if(!bytes(cursor.offset,std::min<uint64_t>(65536,uint64_t(size)-cursor.offset),header))return false;CompactValue h;CompactReader r(header);if(!r.structure(h))return fail("invalid Parquet page header");
-      int type=h.field(1).integer;int64_t raw=h.field(2).integer,compressed=h.field(3).integer;if(raw<0||compressed<0||raw>64*1024*1024||compressed>64*1024*1024)return fail("Parquet page resource limit exceeded");
+      int type=h.field(1).integer;int64_t raw=h.field(2).integer,compressed=h.field(3).integer;if(raw<0||compressed<0||raw>16*1024*1024||compressed>16*1024*1024)return fail("Parquet page resource limit exceeded");
       std::string data;if(!bytes(cursor.offset+r.pos,compressed,data))return false;cursor.offset+=r.pos+compressed;
       if(type==1)continue; // index page
       const bool v2=type==3;const CompactValue &ph=h.field(v2?8:type==2?7:5);size_t count=ph.field(1).integer;
-      if(count>10000000)return fail("Parquet page value limit exceeded");size_t p=0;std::vector<uint32_t> definitions;
+      uint64_t memory=raw+compressed+count*sizeof(Cell)*2;
+      for(const Cursor &other:cursors_){
+        memory+=(other.dictionary.capacity()+other.page.capacity())*sizeof(Cell);
+        for(const Cell &cell:other.dictionary)memory+=cell.text.capacity();
+        for(const Cell &cell:other.page)memory+=cell.text.capacity();
+      }
+      if(count>1000000||memory>128*1024*1024)return fail("Parquet page memory limit exceeded");size_t p=0;std::vector<uint32_t> definitions;
       if(v2){size_t deflen=ph.field(5).integer,replen=ph.field(6).integer;if(replen!=0||deflen>data.size())return fail("nested Parquet page is unsupported");if(schema.optional){std::string def=data.substr(0,deflen);size_t dp=0;if(!decode_levels(def,dp,1,count,definitions))return fail("invalid Parquet definition levels");}p=deflen;
         auto compressed_flag=ph.fields.find(7);bool is_compressed=compressed_flag==ph.fields.end()||compressed_flag->second.integer;
         if(chunk.codec==1&&is_compressed){std::string values;if(size_t(raw)<p||!snappy_decode(data.substr(p),values,raw-p))return fail("invalid Parquet Snappy page");data.resize(p);data+=values;}
