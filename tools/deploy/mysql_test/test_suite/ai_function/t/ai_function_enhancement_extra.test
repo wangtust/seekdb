@@ -19,6 +19,9 @@ insert into ai_enhance_prompt values(1, '{0}-ok', 'lob'), (2, 'no placeholder', 
 # json arguments keep their structure, lob arguments are read as text
 select ai_prompt(t, a) from ai_enhance_prompt order by id;
 select ai_prompt('{0}/{0}/{1}', json_array(1,true), json_object('k',2));
+# json 参数可以是数组, 但模板必须是字符串
+select ai_prompt('{0}', json_array('a'), json_object('k', json_array(1,2)));
+--error 5083
 select ai_prompt(json_array('a'), json_object('k', json_array(1,2)));
 
 # invalid argument types are still rejected

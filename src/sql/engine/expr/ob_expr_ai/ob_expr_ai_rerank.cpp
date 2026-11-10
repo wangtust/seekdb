@@ -223,7 +223,15 @@ int ObExprAIRerank::eval_ai_rerank(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &
         }
       }
       if (OB_SUCC(ret)) {
-        if (OB_FAIL(sort_result_array_by_score(temp_allocator, result_array))) {
+        // 模型服务返回的结果数量必须与文档数量一致
+        if (result_array->element_count() != document_array->element_count()) {
+          ret = OB_INVALID_DATA;
+          LOG_USER_ERROR(OB_INVALID_DATA, "ai_rerank, result count is not equal to document count");
+        }
+      }
+      if (OB_SUCC(ret)) {
+        if (OB_FAIL(sort_result_array_by_score(temp_allocator, result_array,
+                    document_array->element_count()))) {
         }
       }
       if (OB_SUCC(ret)) {
@@ -310,30 +318,46 @@ int ObExprAIRerank::sort_document_array_by_model_result(ObIAllocator &allocator,
 {
   INIT_SUCC(ret);
   ObJsonArray *sorted_document_array_obj = nullptr;
+  int64_t doc_count = document_array->element_count();
   if (OB_FAIL(ObAIFuncJsonUtils::get_json_array(allocator, sorted_document_array_obj))) {
   } else {
     int64_t count = model_result_array->element_count();
-    int64_t doc_count = document_array->element_count();
+    ObArray<char> seen_indexes;
+    if (count > 0) {
+      if (OB_FAIL(seen_indexes.reserve(count))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        for (int64_t i = 0; i < count; i++) {
+          if (OB_FAIL(seen_indexes.push_back(0))) {
+            break;
+          }
+        }
+      }
+    }
     for (int64_t i = 0; OB_SUCC(ret) && i < count; i++) {
       ObJsonNode *model_result_node = model_result_array->get_value(i);
       if (OB_ISNULL(model_result_node) || model_result_node->json_type() != ObJsonNodeType::J_OBJECT) {
-        ret = OB_ERR_UNEXPECTED;
+        ret = OB_INVALID_DATA;
       } else {
         ObJsonObject *model_result_obj = static_cast<ObJsonObject *>(model_result_node);
         ObJsonNode *index_node = model_result_obj->get_value(INDEX_KEY);
         ObJsonNode *score_node = model_result_obj->get_value(SCORE_KEY);
         int64_t index = get_rerank_index(index_node);
         if (index < 0 || index >= doc_count || OB_ISNULL(score_node) || !score_node->is_number()) {
-          ret = OB_ERR_UNEXPECTED;
+          ret = OB_INVALID_DATA;
+        } else if (seen_indexes[index] != 0) {
+          // index 重复
+          ret = OB_INVALID_DATA;
         } else {
+          seen_indexes[index] = 1;
           ObJsonNode *origin_node = document_array->get_value(index);
           ObJsonNode *new_node = nullptr;
           if (OB_ISNULL(origin_node)) {
-            ret = OB_ERR_UNEXPECTED;
+            ret = OB_INVALID_DATA;
           } else if (OB_ISNULL(new_node = origin_node->clone(&allocator, true))) {
             ret = OB_ERR_UNEXPECTED;
           } else if (new_node->json_type() != ObJsonNodeType::J_OBJECT) {
-            ret = OB_ERR_UNEXPECTED;
+            ret = OB_INVALID_DATA;
           } else {
             ObJsonObject *new_obj = static_cast<ObJsonObject *>(new_node);
             if (OB_FAIL(new_obj->add(MODEL_SCORE_KEY, score_node))) {
@@ -342,6 +366,13 @@ int ObExprAIRerank::sort_document_array_by_model_result(ObIAllocator &allocator,
           }
         }
       }
+    }
+  }
+  if (OB_SUCC(ret)) {
+    // 模型服务返回的结果数量必须与文档数量一致
+    if (model_result_array->element_count() != doc_count) {
+      ret = OB_INVALID_DATA;
+      LOG_USER_ERROR(OB_INVALID_DATA, "ai_rerank, result count is not equal to document count");
     }
   }
   if (OB_SUCC(ret)) {
@@ -467,7 +498,7 @@ int ObExprAIRerank::append_result_array(ObIAllocator &allocator, ObJsonArray *de
   return ret;
 }
 
-int ObExprAIRerank::sort_result_array_by_score(ObIAllocator &allocator, ObJsonArray *&result_array)
+int ObExprAIRerank::sort_result_array_by_score(ObIAllocator &allocator, ObJsonArray *&result_array, int64_t doc_count)
 {
   INIT_SUCC(ret);
   if (OB_ISNULL(result_array)) {
@@ -475,17 +506,34 @@ int ObExprAIRerank::sort_result_array_by_score(ObIAllocator &allocator, ObJsonAr
   } else {
     int64_t count = result_array->element_count();
     // 先校验每个结果元素, 保证后续比较可以安全读取 index 和 score
+    ObArray<char> seen_indexes;
+    if (count > 0) {
+      if (OB_FAIL(seen_indexes.reserve(count))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        for (int64_t i = 0; i < count; i++) {
+          if (OB_FAIL(seen_indexes.push_back(0))) {
+            break;
+          }
+        }
+      }
+    }
     for (int64_t i = 0; OB_SUCC(ret) && i < count; i++) {
       ObJsonNode *node = result_array->get_value(i);
       if (OB_ISNULL(node) || node->json_type() != ObJsonNodeType::J_OBJECT) {
-        ret = OB_ERR_UNEXPECTED;
+        ret = OB_INVALID_DATA;
       } else {
         ObJsonObject *obj = static_cast<ObJsonObject *>(node);
         ObJsonNode *index_node = obj->get_value(INDEX_KEY);
         ObJsonNode *score_node = obj->get_value(SCORE_KEY);
-        if (OB_ISNULL(index_node) || OB_ISNULL(score_node) ||
-            !score_node->is_number() || get_rerank_index(index_node) < 0) {
-          ret = OB_ERR_UNEXPECTED;
+        int64_t index = get_rerank_index(index_node);
+        if (OB_ISNULL(index_node) || OB_ISNULL(score_node) || !score_node->is_number() || index < 0) {
+          ret = OB_INVALID_DATA;
+        } else if (index >= doc_count || seen_indexes[index] != 0) {
+          // index 越界或者重复
+          ret = OB_INVALID_DATA;
+        } else {
+          seen_indexes[index] = 1;
         }
       }
     }

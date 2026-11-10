@@ -1621,26 +1621,34 @@ int ObAIFuncModel::call_dense_embedding_vector_v2(ObArray<ObString> &content, Ob
     ObJsonArray *result_array = static_cast<ObJsonArray *>(result_base);
     int64_t count = result_array->element_count();
     if (content.count() != count) {
-      ret = OB_ERR_UNEXPECTED;
+      ret = OB_INVALID_DATA;
+      LOG_USER_ERROR(OB_INVALID_DATA, "ai_embed, embedding result count is not equal to input count");
     } else {
       for (int64_t i = 0; OB_SUCC(ret) && i < count; i++) {
         ObIJsonBase *j_base = result_array->get_value(i);
         if (OB_ISNULL(j_base)) {
-          ret = OB_ERR_UNEXPECTED;
+          ret = OB_INVALID_DATA;
         } else if (j_base->json_type() != ObJsonNodeType::J_ARRAY) {
-          ret = OB_INVALID_ARGUMENT;
-          LOG_USER_ERROR(OB_INVALID_ARGUMENT, "ai_embed, embedding result is not array");
+          ret = OB_INVALID_DATA;
+          LOG_USER_ERROR(OB_INVALID_DATA, "ai_embed, embedding result is not array");
         } else {
           ObJsonArray *embedding_array = static_cast<ObJsonArray *>(j_base);
           if (dimension > 0 && embedding_array->element_count() != dimension) {
-            ret = OB_INVALID_ARGUMENT;
-            LOG_USER_ERROR(OB_INVALID_ARGUMENT, "ai_embed, result dimension is not equal to dimension");
+            ret = OB_INVALID_DATA;
+            LOG_USER_ERROR(OB_INVALID_DATA, "ai_embed, result dimension is not equal to dimension");
           } else {
             for (int64_t k = 0; OB_SUCC(ret) && k < embedding_array->element_count(); k++) {
               ObJsonNode *element = embedding_array->get_value(k);
               if (OB_ISNULL(element) || !element->is_number()) {
-                ret = OB_INVALID_ARGUMENT;
-                LOG_USER_ERROR(OB_INVALID_ARGUMENT, "ai_embed, embedding element is not a number");
+                ret = OB_INVALID_DATA;
+                LOG_USER_ERROR(OB_INVALID_DATA, "ai_embed, embedding element is not a number");
+              } else {
+                // 元素还必须是可以用 float 表示的有限数值
+                double value = element->get_double();
+                if (value != value || value > ObAIFuncUtils::OB_AI_FUNC_MAX_FLOAT_VALUE || value < -ObAIFuncUtils::OB_AI_FUNC_MAX_FLOAT_VALUE) {
+                  ret = OB_INVALID_DATA;
+                  LOG_USER_ERROR(OB_INVALID_DATA, "ai_embed, embedding element is out of range");
+                }
               }
             }
           }

@@ -285,6 +285,8 @@ private:
 class ObAIFuncUtils 
 {
 public:
+  // float 能表示的最大值, 用于校验 embedding 元素的取值范围
+  static constexpr double OB_AI_FUNC_MAX_FLOAT_VALUE = 3.40282346638528860e+38;
   ObAIFuncUtils() {}
   virtual ~ObAIFuncUtils() {}
   static bool is_completion_type(const ObAIFuncExprInfo *info) {return info->type_ == share::EndpointType::COMPLETION;}
