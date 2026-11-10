@@ -31,6 +31,27 @@ namespace sql
 
 OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_, file_scan_, file_column_ids_);
 
+OB_SERIALIZE_MEMBER((FileScanSpec, ObFunctionTableSpec));
+
+int FileScanOp::inner_get_next_batch(int64_t maximum)
+{
+  int ret = OB_SUCCESS;
+  const int64_t size = std::min<int64_t>(maximum, get_spec().max_batch_size_);
+  brs_.size_ = 0;
+  brs_.end_ = false;
+  brs_.skip_->reset(size);
+  file_row_allocator_.reuse();
+  ObEvalCtx::BatchInfoScopeGuard guard(eval_ctx_);
+  guard.set_batch_size(size);
+  for (int64_t i = 0; OB_SUCC(ret) && i < size; ++i) {
+    guard.set_batch_idx(i);
+    if (OB_FAIL(inner_get_next_row_file())) {
+      if (ret == OB_ITER_END) { brs_.end_ = true; ret = OB_SUCCESS; break; }
+    } else ++brs_.size_;
+  }
+  return ret;
+}
+
 int ObFunctionTableOp::inner_open()
 {
   int ret = OB_SUCCESS;
@@ -142,7 +163,7 @@ int ObFunctionTableOp::inner_get_next_row_file()
 {
   int ret = OB_SUCCESS;
   clear_evaluated_flag();
-  file_row_allocator_.reuse();
+  if (!is_vectorized()) file_row_allocator_.reuse();
   std::vector<file_sql::Cell> row;
   bool end = false;
   if (OB_FAIL(ctx_.check_status())) {
@@ -177,7 +198,7 @@ int ObFunctionTableOp::inner_get_next_row_file()
           }
         }
       }
-      if (OB_SUCC(ret)) expr->set_evaluated_projected(eval_ctx_);
+      if (OB_SUCC(ret)) { expr->set_evaluated_projected(eval_ctx_); expr->set_evaluated_flag(eval_ctx_); }
     }
   }
   return ret;

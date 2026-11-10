@@ -5492,6 +5492,12 @@ int ObStaticEngineCG::generate_spec(ObLogSelectInto &op, ObSelectIntoSpec &spec,
   return ret;
 }
 
+int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, FileScanSpec &spec,
+    const bool in_root_job)
+{
+  return generate_spec(op, static_cast<ObFunctionTableSpec &>(spec), in_root_job);
+}
+
 int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec &spec,
     const bool in_root_job)
 {
@@ -6126,6 +6132,14 @@ int ObStaticEngineCG::get_phy_op_type(ObLogicalOperator &log_op,
     }
     case log_op_def::LOG_FUNCTION_TABLE: {
       type = PHY_FUNCTION_TABLE;
+      const ObRawExpr *value = static_cast<ObLogFunctionTable &>(log_op).get_value_expr();
+      if (value != nullptr && value->is_const_raw_expr()) {
+        const ObObj &obj = static_cast<const ObConstRawExpr *>(value)->get_value();
+        if (obj.is_varchar()) {
+          ObString text=obj.get_string();
+          if (file_sql::is_payload(std::string(text.ptr(),text.length()))) type=PHY_FILE_SCAN;
+        }
+      }
       break;
     }
     case log_op_def::LOG_JSON_TABLE: {

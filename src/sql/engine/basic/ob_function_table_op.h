@@ -62,7 +62,7 @@ public:
   //virtual int inner_get_next_batch(int64_t max_row_cnt) override;
   virtual int inner_close() override;
   virtual void destroy() override;
-private:
+protected:
   int inner_get_next_row_file();
   file_sql::Reader *file_reader_;
   common::ObArenaAllocator file_row_allocator_;
@@ -76,6 +76,22 @@ private:
   common::ObObj value_;
   pl::ObPLCollection *value_table_;
   int (ObFunctionTableOp::*next_row_func_)();
+};
+
+// Keep file scans vectorized without changing PL/UDF collection execution.
+class FileScanSpec : public ObFunctionTableSpec
+{
+  OB_UNIS_VERSION_V(1);
+public:
+  FileScanSpec(common::ObIAllocator &alloc, const ObPhyOperatorType type)
+    : ObFunctionTableSpec(alloc, type) {}
+};
+class FileScanOp : public ObFunctionTableOp
+{
+public:
+  FileScanOp(ObExecContext &ctx, const ObOpSpec &spec, ObOpInput *input)
+    : ObFunctionTableOp(ctx, spec, input) {}
+  virtual int inner_get_next_batch(int64_t maximum) override;
 };
 
 } // end namespace sql
