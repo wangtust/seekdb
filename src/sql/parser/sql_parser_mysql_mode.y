@@ -11299,14 +11299,13 @@ COPY select_with_parens TO STRING_VALUE file_sql_copy_opts
 ;
 file_sql_copy_opts:
 /* empty */ { $$ = NULL; }
-| '(' file_sql_copy_opt_list ')' { $$ = $2; }
+| '(' file_sql_copy_opt_list ')' { merge_nodes($$, result, T_EXPR_LIST, $2); }
 ;
 file_sql_copy_opt_list:
-file_sql_copy_opt { malloc_non_terminal_node($$, result->malloc_pool_, T_EXPR_LIST, 1, $1); }
+file_sql_copy_opt { $$ = $1; }
 | file_sql_copy_opt_list ',' file_sql_copy_opt
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3);
-  merge_nodes($$, result, T_EXPR_LIST, $$);
 }
 ;
 file_sql_copy_opt:
@@ -11327,19 +11326,25 @@ relation_name
 file_sql_table_expr:
 NAME_OB '(' file_sql_args ')' %prec LOWER_PARENS
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, NULL);
+  ParseNode *args = NULL;
+  merge_nodes(args, result, T_EXPR_LIST, $3);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, args, NULL);
   $$->value_ = 0x46494c45;
   $$->is_tree_not_param_ = 1;
 }
 | NAME_OB '(' file_sql_args ')' relation_name
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, $5);
+  ParseNode *args = NULL;
+  merge_nodes(args, result, T_EXPR_LIST, $3);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, args, $5);
   $$->value_ = 0x46494c45;
   $$->is_tree_not_param_ = 1;
 }
 | NAME_OB '(' file_sql_args ')' AS relation_name
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, $6);
+  ParseNode *args = NULL;
+  merge_nodes(args, result, T_EXPR_LIST, $3);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, args, $6);
   $$->value_ = 0x46494c45;
   $$->is_tree_not_param_ = 1;
 }
@@ -11347,12 +11352,11 @@ NAME_OB '(' file_sql_args ')' %prec LOWER_PARENS
 file_sql_args:
 file_sql_arg
 {
-  malloc_non_terminal_node($$, result->malloc_pool_, T_EXPR_LIST, 1, $1);
+  $$ = $1;
 }
 | file_sql_args ',' file_sql_arg
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3);
-  merge_nodes($$, result, T_EXPR_LIST, $$);
 }
 ;
 file_sql_arg:

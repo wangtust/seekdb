@@ -5517,7 +5517,7 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
   } else {
     if (value_raw_expr->is_const_raw_expr()) {
       const ObObj &value = static_cast<ObConstRawExpr *>(value_raw_expr)->get_value();
-      if (value.is_varchar()) {
+      if (value.get_type() == ObVarcharType) {
         ObString text = value.get_string();
         spec.file_scan_ = file_sql::is_payload(std::string(text.ptr(), text.length()));
       }
@@ -6135,7 +6135,7 @@ int ObStaticEngineCG::get_phy_op_type(ObLogicalOperator &log_op,
       const ObRawExpr *value = static_cast<ObLogFunctionTable &>(log_op).get_value_expr();
       if (value != nullptr && value->is_const_raw_expr()) {
         const ObObj &obj = static_cast<const ObConstRawExpr *>(value)->get_value();
-        if (obj.is_varchar()) {
+        if (obj.get_type() == ObVarcharType) {
           ObString text=obj.get_string();
           if (file_sql::is_payload(std::string(text.ptr(),text.length()))) type=PHY_FILE_SCAN;
         }

@@ -7740,7 +7740,7 @@ int ObDMLResolver::resolve_function_table_column_item_sys_func(const TableItem &
   CK (OB_NOT_NULL(table_expr = table_item.function_table_expr_));
   if (OB_SUCC(ret) && table_expr->is_const_raw_expr()) {
     const ObObj &value = static_cast<ObConstRawExpr *>(table_expr)->get_value();
-    if (value.is_varchar()) {
+    if (value.get_type() == ObVarcharType) {
       const ObString data = value.get_string();
       file_sql::Reader reader;
       if (file_sql::decode(std::string(data.ptr(), data.length()), reader)) {
@@ -7759,10 +7759,11 @@ int ObDMLResolver::resolve_function_table_column_item_sys_func(const TableItem &
               case file_sql::Type::BOOLEAN: meta.set_tinyint(); break;
               case file_sql::Type::DATE: meta.set_date(); break;
               case file_sql::Type::DATETIME: meta.set_datetime(); break;
-              default: meta.set_varchar(); meta.set_collation_type(CS_TYPE_UTF8MB4_BIN); break;
+              default: meta.set_varchar(); meta.set_collation_type(CS_TYPE_UTF8MB4_BIN); meta.set_collation_level(CS_LEVEL_IMPLICIT); break;
               }
               ObAccuracy accuracy = ObAccuracy::DDL_DEFAULT_ACCURACY2[0][meta.get_type()];
               if (meta.is_varchar()) accuracy.set_length(file_sql::Reader::MAX_RECORD);
+              if (column.type == file_sql::Type::DATETIME) accuracy.set_scale(0);
               ret = resolve_function_table_column_item(table_item, meta, accuracy, name, OB_APP_MIN_COLUMN_ID + i, existing);
             }
             if (OB_SUCC(ret)) ret = col_items.push_back(*existing);
