@@ -7,7 +7,7 @@ using namespace oceanbase::sql::file_sql;
 static void write(const std::string &path, const std::string &data) {
   std::ofstream f(path); f << data; f.close();
 }
-int main() {
+int main(int argc,char **argv) {
   char dir[] = "/tmp/file-reader-XXXXXX"; assert(mkdtemp(dir));
   std::string path=std::string(dir)+"/test.csv";
   write(path,"id,id,note,day\r\n1,2,\"hello,\nworld\",2024-02-29\r\n3,4,\"say \"\"hi\"\"\",\r\n");
@@ -30,5 +30,11 @@ int main() {
   assert(infer(Cell("2023-02-29"))==Type::VARCHAR);
   assert(widen(Type::DOUBLE,Type::BIGINT)==widen(Type::BIGINT,Type::DOUBLE));
   std::string resolved,error;assert(!canonical("/etc/passwd",dir,resolved,error));
+  if(argc>1){
+    Reader parquet;Options po;po.path=argv[1];po.format="parquet";
+    assert(parquet.open(po,"/tmp"));int count=0,sum=0;
+    while(true){assert(parquet.next(row,end));if(end)break;sum+=std::atoi(row[0].text.c_str());++count;}
+    assert(count==7&&sum==21);assert(parquet.rescan());assert(parquet.next(row,end)&&row[0].text=="0");
+  }
   unlink(path.c_str());unlink((std::string(dir)+"/test.csv").c_str());rmdir(dir);
 }

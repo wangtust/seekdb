@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
 #include <limits>
 #include <map>
@@ -71,7 +72,7 @@ inline std::string lower(std::string v) {
 }
 inline bool valid_utf8(const std::string &s) {
   for(size_t i=0;i<s.size();) {
-    unsigned char c=s[i++]; if(c<0x80) { if(c==0) return false; continue; }
+    unsigned char c=s[i++]; if(c<0x80) continue;
     int n= c>=0xC2&&c<=0xDF?1:c>=0xE0&&c<=0xEF?2:c>=0xF0&&c<=0xF4?3:-1;
     if(n<0||i+n>s.size()) return false;
     uint32_t cp=c&((1U<<(6-n))-1);
@@ -129,6 +130,8 @@ inline bool canonical(const std::string &path,const std::string &root,std::strin
   return true;
 }
 
+#include "parquet_reader.h"
+
 class FlatJson {
 public:
   explicit FlatJson(const std::string &s):s_(s),p_(0){}
@@ -142,7 +145,7 @@ public:
       ws();if(!take(':'))return fail(error);ws();Cell v;
       if(p_<s_.size()&&s_[p_]=='"'){if(!string(v.text))return fail(error);v.null_value=false;}
       else {
-        size_t start=p_;while(p_<s_.size()&&s_[p_]!=','&&s_[p_]!='}'&&!std::isspace(static_cast<unsigned char>(s_[p_])))++p_;
+        size_t start=p_;while(p_<s_.size()&&s_[p_]!=','&&s_[p_]!='}'&&!(s_[p_]==' '||s_[p_]=='\t'||s_[p_]=='\r'||s_[p_]=='\n'))++p_;
         std::string token=s_.substr(start,p_-start);
         if(token=="null"){}else if(token=="true"||token=="false"){v=Cell(token);}
         else if(number(token)){v=Cell(token);}else return fail(error);
@@ -152,7 +155,7 @@ public:
     ws();if(p_!=s_.size())return fail(error);return true;
   }
 private:
-  void ws(){while(p_<s_.size()&&std::isspace(static_cast<unsigned char>(s_[p_])))++p_;}
+  void ws(){while(p_<s_.size()&&(s_[p_]==' '||s_[p_]=='\t'||s_[p_]=='\r'||s_[p_]=='\n'))++p_;}
   bool take(char c){if(p_<s_.size()&&s_[p_]==c){++p_;return true;}return false;}
   bool fail(std::string &e){e="invalid flat JSON object (nested values and arrays are unsupported), byte "+std::to_string(p_+1);return false;}
   static bool number(const std::string &s){
@@ -200,7 +203,8 @@ public:
     Snapshot current=Snapshot::from(st);
     if(!infer_schema&&!(current==snapshot)){::close(fd);error="file changed since schema inference";return false;}
     snapshot=current;file_=::fdopen(fd,"rb");if(!file_){::close(fd);error="cannot create file stream";return false;}
-    if(options.format!="csv"&&options.format!="json"){error="unsupported file format";close();return false;}
+    if(options.format!="csv"&&options.format!="json"&&options.format!="parquet"){error="unsupported file format";close();return false;}
+    if(options.format=="parquet"){if(!parquet_.init(file_,columns)){error=parquet_.error;close();return false;}return true;}
     if(infer_schema){columns.clear();column_map_.clear();if(!infer_all()){close();return false;}}
     inferred_=true;return rewind_data();
   }
@@ -209,6 +213,7 @@ public:
       if(glob_pos_>=files_.size()){end=true;return true;}row.push_back(Cell(files_[glob_pos_++]));return true;
     }
     if(!unchanged())return false;
+    if(options.format=="parquet"){bool ok=parquet_.next(row,end);if(!ok)error=parquet_.error;return ok&&unchanged();}
     if(options.format=="csv"){
       if(!csv(row,end))return false;if(end)return unchanged();
       if(row.size()!=columns.size()){error="CSV field count differs from schema at record "+std::to_string(record_);return false;}
@@ -216,9 +221,10 @@ public:
       std::vector<std::pair<std::string,Cell>> fields;if(!json(fields,end))return false;if(end)return unchanged();
       row.resize(columns.size());for(const auto &field:fields){auto it=column_map_.find(field.first);if(it==column_map_.end()){error="JSON field appeared after schema inference";return false;}row[it->second]=field.second;}
     }
-    return true;
+    return unchanged();
   }
-  bool rescan(){if(options.format=="glob"){glob_pos_=0;return true;}return unchanged()&&rewind_data();}
+  void project(const std::set<size_t> &ids){parquet_.projection=ids;}
+  bool rescan(){if(options.format=="parquet")return unchanged()&&parquet_.rescan();if(options.format=="glob"){glob_pos_=0;return true;}return unchanged()&&rewind_data();}
   void close(){if(file_){std::fclose(file_);file_=nullptr;}files_.clear();glob_pos_=0;}
 private:
   bool unchanged(){struct stat st,ps;if(!file_||::fstat(fileno(file_),&st)||::stat(options.path.c_str(),&ps)||!(Snapshot::from(st)==snapshot)||!(Snapshot::from(ps)==snapshot)){error="file changed during query";return false;}return true;}
@@ -252,9 +258,10 @@ private:
     return unchanged();
   }
   bool csv(std::vector<Cell> &row,bool &end){
+    if(record_==0&&ftello(file_)==0){unsigned char bom[3];size_t n=fread(bom,1,3,file_);if(n!=3||bom[0]!=0xEF||bom[1]!=0xBB||bom[2]!=0xBF)fseeko(file_,0,SEEK_SET);}
     row.clear();end=false;std::string field;bool quoted=false,after=false,was_quoted=false,any=false;size_t bytes=0;
     for(;;){int c=std::fgetc(file_);if(c!=EOF){any=true;if(++bytes>MAX_RECORD){error="CSV record limit exceeded";return false;}}
-      if(c==EOF){if(std::ferror(file_)){error="CSV read error";return false;}if(quoted){error="unterminated CSV quote at record "+std::to_string(record_+1);return false;}if(!any&&row.empty()&&field.empty()){end=true;return true;}row.push_back(make_cell(field,was_quoted));++record_;return true;}
+      if(c==EOF){if(std::ferror(file_)){error="CSV read error";return false;}if(quoted){error="unterminated CSV quote at record "+std::to_string(record_+1);return false;}if(!any&&row.empty()&&field.empty()){end=true;return true;}if(!valid_utf8(field)){error="invalid UTF-8 CSV field";return false;}row.push_back(make_cell(field,was_quoted));++record_;return true;}
       if(quoted){if(c==options.escape&&options.escape!=options.quote){int d=std::fgetc(file_);if(d==EOF){error="trailing CSV escape";return false;}field.push_back(d);++bytes;}
         else if(c==options.quote){int d=std::fgetc(file_);if(d==options.quote&&options.escape==options.quote){field.push_back(c);++bytes;}else{quoted=false;after=true;if(d!=EOF)std::ungetc(d,file_);}}
         else field.push_back(c);
@@ -270,6 +277,7 @@ private:
     std::string line;end=false;for(;;){int c=std::fgetc(file_);if(c==EOF){if(std::ferror(file_)){error="JSONL read error";return false;}if(line.empty()){end=true;return true;}break;}if(c=='\n')break;line.push_back(c);if(line.size()>MAX_RECORD){error="JSONL record limit exceeded";return false;}}
     ++record_;if(!line.empty()&&line.back()=='\r')line.pop_back();if(!valid_utf8(line)){error="invalid UTF-8 JSONL";return false;}FlatJson parser(line);if(!parser.parse(fields,error)){error+=" at record "+std::to_string(record_);return false;}return true;
   }
+  ParquetReader parquet_;
   FILE *file_;size_t record_;bool inferred_;std::string root_;
   std::map<std::string,size_t> column_map_;std::vector<std::string> files_;size_t glob_pos_;
   Reader(const Reader &)=delete;Reader &operator=(const Reader &)=delete;

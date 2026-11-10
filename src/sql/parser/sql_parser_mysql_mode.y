@@ -51,7 +51,8 @@
     malloc_terminal_node(display_node, result->malloc_pool_, display_type); \
   } \
   malloc_non_terminal_node(explain_stmt, result->malloc_pool_, T_EXPLAIN, 5, \
-                           type_node, display_node, into_table, set_statement_id, stmt);
+                           type_node, display_node, into_table, set_statement_id, stmt); \
+  explain_stmt->value_ = no_use == NULL ? 0 : no_use->value_;
 %}
 
 %destructor {destroy_tree($$);}<node>
@@ -12348,8 +12349,8 @@ explain_or_desc relation_factor opt_desc_column_option
 
 explain_or_desc:
 EXPLAIN {$$ = NULL;}
-| DESCRIBE {$$ = NULL;}
-| DESC  {$$ = NULL;}
+| DESCRIBE { malloc_terminal_node($$, result->malloc_pool_, T_INT); $$->value_ = 0x46494c45; }
+| DESC  { malloc_terminal_node($$, result->malloc_pool_, T_INT); $$->value_ = 0x46494c45; }
 ;
 
 explainable_stmt:

@@ -50,6 +50,9 @@ int ObFunctionTableOp::inner_open()
     } else if (OB_ISNULL(file_reader_ = new (std::nothrow) file_sql::Reader())) {
       ret = OB_ALLOCATE_MEMORY_FAILED;
     } else {
+      std::set<size_t> projected;
+      for (int64_t i = 0; i < MY_SPEC.file_column_ids_.count(); ++i) projected.insert(MY_SPEC.file_column_ids_.at(i));
+      file_reader_->project(projected);
       ObString payload = value->get_string();
       if (!file_sql::decode(std::string(payload.ptr(), payload.length()), *file_reader_) ||
           !file_reader_->open(file_reader_->options, std::string(root.ptr(), root.length()), false)) {
