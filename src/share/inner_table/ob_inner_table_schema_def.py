@@ -342,7 +342,13 @@ all_column_def = dict(
       ('sub_data_type', 'int', 'false', '0'),
       ('skip_index_attr', 'int', 'false', '0'),
       ('lob_chunk_size', 'int', 'false', 'OB_DEFAULT_LOB_CHUNK_SIZE'),
-      ('local_session_vars', 'longtext', 'true')
+      ('local_session_vars', 'longtext', 'true'),
+      ('ai_column_expr', 'longtext', 'false', ''),
+      ('ai_column_dependency_ids', 'longtext', 'false', ''),
+      ('ai_column_max_retries', 'int', 'false', '2'),
+      ('ai_column_state_column_id', 'int', 'false', '0'),
+      ('ai_column_request_column_id', 'int', 'false', '0'),
+      ('ai_column_result_spec_column_id', 'int', 'false', '0')
   ]
   )
 
